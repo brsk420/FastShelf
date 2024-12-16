@@ -11,20 +11,21 @@ import Cocoa
 class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTableViewDelegate {
     var panel: NSPanel!
     var timer: Timer?
+    var showPanelTimer: Timer?
     var tableView: NSTableView!
     var storedItems: [URL] = []
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         
-        // Получаем размеры экрана и меню бара
-        let screenHeight = NSScreen.main?.frame.height ?? 800
-        let screenWidth = NSScreen.main?.frame.width ?? 1200
-        let menuBarHeight = NSScreen.main?.frame.minY ?? 0
+        guard let mainScreen = NSScreen.main else { return }
         
-        let panelHeight = screenHeight - abs(menuBarHeight) - 40
+        let panelWidth = 200.0
+        let menuBarHeight = abs(mainScreen.frame.minY - mainScreen.visibleFrame.minY)
+        let panelHeight = mainScreen.frame.height - menuBarHeight - 10
+        
         panel = NSPanel(
-            contentRect: NSRect(x: screenWidth - 200, y: 0, width: 200, height: panelHeight),
+            contentRect: NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight),
             styleMask: [.nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -51,6 +52,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
         label.backgroundColor = .clear
         label.alignment = .left
         label.font = NSFont.boldSystemFont(ofSize: 16)
+        label.isEnabled = true
+        let gestureRecognizer = NSClickGestureRecognizer(target: self, action: #selector(handleLabelRightClick(_:)))
+        gestureRecognizer.buttonMask = 0x2 // правая кнопка мыши
+        label.addGestureRecognizer(gestureRecognizer)
         contentView.addSubview(label)
         
         // Создаем кнопку Clear
@@ -127,23 +132,43 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
     
     func applicationWillTerminate(_ notification: Notification) {
         timer?.invalidate()
+        showPanelTimer?.invalidate()
     }
     
     func checkMousePosition() {
         let mouseLocation = NSEvent.mouseLocation
-        let screenWidth = NSScreen.main?.frame.width ?? 1200
         
-        if mouseLocation.x > screenWidth - 5 {
-            showPanel()
-        } else if mouseLocation.x < screenWidth - 205 {
+        // Находим текущий экран по положению мыши
+        guard let currentScreen = NSScreen.screens.first(where: { NSMouseInRect(mouseLocation, $0.frame, false) }) else {
+            return
+        }
+        
+        let screenEdge = currentScreen.frame.maxX
+        
+        if mouseLocation.x >= screenEdge - 1 {
+            showPanelTimer?.invalidate()
+            showPanelTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: false) { [weak self] _ in
+                self?.showPanel(on: currentScreen)
+            }
+        } else if mouseLocation.x < screenEdge - 205 {
+            showPanelTimer?.invalidate()
+            showPanelTimer = nil
             hidePanel()
         }
     }
     
-    func showPanel() {
+    func showPanel(on screen: NSScreen) {
         if !panel.isVisible {
-            let screenWidth = NSScreen.main?.frame.width ?? 1200
-            panel.setFrameOrigin(NSPoint(x: screenWidth - 200, y: 0))
+            let menuBarHeight = abs(screen.frame.minY - screen.visibleFrame.minY)
+            let panelHeight = screen.frame.height - menuBarHeight - 10
+            
+            panel.setFrame(NSRect(
+                x: screen.frame.maxX - 200,
+                y: screen.frame.minY + menuBarHeight,
+                width: 200,
+                height: panelHeight
+            ), display: true)
+            
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.3
                 panel.animator().alphaValue = 0.95
@@ -233,7 +258,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
         
         var added = false
         for item in items {
-            // Проверяем, нет ли уже такого файла на полке
+            // роверяем, нет ли уже такого файла на полке
             if !storedItems.contains(where: { $0.path == item.path }) {
                 storedItems.append(item)
                 added = true
@@ -290,5 +315,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
     
     func tableView(_ tableView: NSTableView, draggingSession session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
         // Можно добавить анимацию или визуальный эффект при окончании перетаскивания
+    }
+    
+    @objc private func handleLabelRightClick(_ sender: NSClickGestureRecognizer) {
+        let menu = NSMenu()
+        menu.addItem(NSMenuItem(title: "Выйти", action: #selector(quitApp), keyEquivalent: "q"))
+        
+        if let event = NSApplication.shared.currentEvent {
+            NSMenu.popUpContextMenu(menu, with: event, for: sender.view!)
+        }
+    }
+    
+    @objc private func quitApp() {
+        NSApplication.shared.terminate(nil)
     }
 }
